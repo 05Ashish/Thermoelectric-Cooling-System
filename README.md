@@ -35,7 +35,6 @@ This project implements a temperature control system for an ESP32 that uses a ro
   - SCL: GPIO 22
 
 ## Dependencies
-- [AiEsp32RotaryEncoder](https://github.com/igorantolic/ai-esp32-rotary-encoder)
 - [Adafruit GFX Library](https://github.com/adafruit/Adafruit-GFX-Library)
 - [Adafruit SSD1306](https://github.com/adafruit/Adafruit_SSD1306)
 
