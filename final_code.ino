@@ -40,7 +40,7 @@
 #define SAMPLE_DELAY 10
 
 // PWM Limits
-#define MIN_FAN_DUTY 0        // 0% minimum fan speed
+#define MIN_FAN_DUTY 128        // 0% minimum fan speed
 #define MAX_FAN_DUTY 255        // 100% maximum fan speed
 #define MIN_PELTIER_DUTY 64     // 25% minimum Peltier duty cycle
 #define MAX_PELTIER_DUTY 255    // 100% maximum Peltier duty cycle
