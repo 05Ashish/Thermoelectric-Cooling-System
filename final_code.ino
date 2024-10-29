@@ -1,4 +1,3 @@
-#include "AiEsp32RotaryEncoder.h"
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
@@ -6,9 +5,6 @@
 #define ROTARY_ENCODER_A_PIN 23
 #define ROTARY_ENCODER_B_PIN 18
 #define ROTARY_ENCODER_BUTTON_PIN 19
-#define ROTARY_ENCODER_VCC_PIN -1
-#define ROTARY_ENCODER_STEPS 2
-
 #define THERMISTOR_PIN 34
 #define BTS_RPWM 26     // PWM pin for Peltier
 #define BTS_LPWM 27     // PWM pin for Fan
@@ -40,59 +36,110 @@
 #define SAMPLE_DELAY 10
 
 // PWM Limits
-#define MIN_FAN_DUTY 128        // 0% minimum fan speed
+#define MIN_FAN_DUTY 128        // 50% minimum fan speed
 #define MAX_FAN_DUTY 255        // 100% maximum fan speed
 #define MIN_PELTIER_DUTY 64     // 25% minimum Peltier duty cycle
 #define MAX_PELTIER_DUTY 255    // 100% maximum Peltier duty cycle
 #define MIN_TEMP_DIFFERENCE 0.4  // Minimum temperature difference
 
 // Fan control parameters
-#define FAN_TEMP_THRESHOLD 2.0  // Temperature difference where fan reaches maximum
-#define FAN_RESPONSE_FACTOR 1.0 // How aggressively fan responds to temperature difference
+#define FAN_TEMP_THRESHOLD 2.0   // Temperature difference where fan reaches maximum
+#define FAN_RESPONSE_FACTOR 1.0  // How aggressively fan responds to temperature difference
+
+// Encoder settings
+#define ENCODER_MIN_VALUE 10
+#define ENCODER_MAX_VALUE 25
+#define ENCODER_STEPS 2         // Number of ticks needed for one value change
 
 // Objects
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, NULL, OLED_RESET);
-AiEsp32RotaryEncoder rotaryEncoder = AiEsp32RotaryEncoder(ROTARY_ENCODER_A_PIN, ROTARY_ENCODER_B_PIN, ROTARY_ENCODER_BUTTON_PIN, ROTARY_ENCODER_VCC_PIN, ROTARY_ENCODER_STEPS);
 
 // Global variables
-volatile int currentSetpoint = 20;
-int lastValue = 20;
-bool buttonPressed = false;
+volatile uint8_t encoderState = 0;
+volatile int32_t encoderValue = 20;
+volatile bool encoderButtonState = false;
+volatile bool lastEncoderButtonState = false;
+volatile unsigned long lastButtonDebounceTime = 0;
+volatile uint8_t encoderTickCount = 0;  // Counter for encoder ticks
+const unsigned long debounceDelay = 50;    // Debounce time in milliseconds
+
 float lastError = 0;
 float integral = 0;
 unsigned long lastPID = 0;
 uint8_t currentPeltierDuty = 0;
 uint8_t currentFanDuty = 0;
+int currentSetpoint = 20;
 
-// Function to calculate fan speed based on temperature difference
-uint8_t calculateFanDuty(float tempDifference) {
-    if (tempDifference <= 0) {
-        return MIN_FAN_DUTY;
+// Function declarations
+void IRAM_ATTR handleEncoder();
+void IRAM_ATTR handleButton();
+float readTemperature();
+void updatePID(float currentTemp);
+void updateDisplay(float currentTemp);
+uint8_t calculateFanDuty(float tempDifference);
+void updatePWM(uint8_t pin, uint8_t duty);
+uint8_t getPWMDuty(uint8_t pin);
+
+// Improved encoder interrupt handler with reduced sensitivity
+void IRAM_ATTR handleEncoder() {
+    static uint8_t lastState = 0;
+    
+    // Read the current state of both encoder pins
+    uint8_t currentState = (digitalRead(ROTARY_ENCODER_A_PIN) << 1) | digitalRead(ROTARY_ENCODER_B_PIN);
+    
+    // State machine for 4-state quadrature encoder
+    switch((lastState << 2) | currentState) {
+        case 0b0001: // Forward rotation
+        case 0b0111:
+        case 0b1110:
+        case 0b1000:
+            encoderTickCount++;
+            if(encoderTickCount >= ENCODER_STEPS) {
+                if(encoderValue < ENCODER_MAX_VALUE) {
+                    encoderValue++;
+                }
+                encoderTickCount = 0;
+            }
+            break;
+            
+        case 0b0100: // Reverse rotation
+        case 0b1101:
+        case 0b1011:
+        case 0b0010:
+            encoderTickCount++;
+            if(encoderTickCount >= ENCODER_STEPS) {
+                if(encoderValue > ENCODER_MIN_VALUE) {
+                    encoderValue--;
+                }
+                encoderTickCount = 0;
+            }
+            break;
     }
     
-    // Calculate fan duty cycle proportional to temperature difference
-    float fanOutput = MIN_FAN_DUTY + ((MAX_FAN_DUTY - MIN_FAN_DUTY) * min(tempDifference / FAN_TEMP_THRESHOLD, 1.0) * FAN_RESPONSE_FACTOR);
-    
-    return (uint8_t)constrain(fanOutput, MIN_FAN_DUTY, MAX_FAN_DUTY);
+    lastState = currentState;
 }
 
-// Function to update PWM duty cycle
-void updatePWM(uint8_t pin, uint8_t duty) {
-    if (pin == BTS_RPWM) {
-        currentPeltierDuty = duty;
-        analogWrite(pin, duty);
-    } else if (pin == BTS_LPWM) {
-        currentFanDuty = duty;
-        analogWrite(pin, duty);
+// Button interrupt handler with debouncing
+void IRAM_ATTR handleButton() {
+    unsigned long currentTime = millis();
+    
+    if ((currentTime - lastButtonDebounceTime) > debounceDelay) {
+        bool reading = digitalRead(ROTARY_ENCODER_BUTTON_PIN);
+        
+        if (reading != lastEncoderButtonState) {
+            lastEncoderButtonState = reading;
+            
+            if (reading == LOW) {  // Button is active LOW
+                encoderButtonState = true;
+                encoderValue = 20;  // Reset to default value
+            }
+        }
+        
+        lastButtonDebounceTime = currentTime;
     }
 }
 
-// Function to read PWM duty cycle
-uint8_t getPWMDuty(uint8_t pin) {
-    return (pin == BTS_RPWM) ? currentPeltierDuty : currentFanDuty;
-}
-
-// Improved temperature reading function with median filtering
+// Function to read temperature with median filtering
 float readTemperature() {
     float samples[NUM_SAMPLES];
     
@@ -124,7 +171,37 @@ float readTemperature() {
     return samples[NUM_SAMPLES/2];
 }
 
-// Revised PID controller function with variable fan speed
+// Function to calculate fan speed based on temperature difference
+uint8_t calculateFanDuty(float tempDifference) {
+    if (tempDifference <= 0) {
+        return MIN_FAN_DUTY;
+    }
+    
+    // Calculate fan duty cycle proportional to temperature difference
+    float fanOutput = MIN_FAN_DUTY + ((MAX_FAN_DUTY - MIN_FAN_DUTY) * 
+                     min(tempDifference / FAN_TEMP_THRESHOLD, 1.0) * 
+                     FAN_RESPONSE_FACTOR);
+    
+    return (uint8_t)constrain(fanOutput, MIN_FAN_DUTY, MAX_FAN_DUTY);
+}
+
+// Function to update PWM duty cycle
+void updatePWM(uint8_t pin, uint8_t duty) {
+    if (pin == BTS_RPWM) {
+        currentPeltierDuty = duty;
+        analogWrite(pin, duty);
+    } else if (pin == BTS_LPWM) {
+        currentFanDuty = duty;
+        analogWrite(pin, duty);
+    }
+}
+
+// Function to read PWM duty cycle
+uint8_t getPWMDuty(uint8_t pin) {
+    return (pin == BTS_RPWM) ? currentPeltierDuty : currentFanDuty;
+}
+
+// PID controller function with variable fan speed
 void updatePID(float currentTemp) {
     unsigned long now = millis();
     if (now - lastPID < PID_INTERVAL) return;
@@ -152,7 +229,7 @@ void updatePID(float currentTemp) {
         // Calculate output
         float output = proportional + integral + derivative;
         
-        // Map the output to the new range (MIN_PELTIER_DUTY to MAX_PELTIER_DUTY)
+        // Map the output to the Peltier duty cycle range
         output = map(constrain(output, 0, MAX_PELTIER_DUTY), 
                     0, MAX_PELTIER_DUTY,
                     MIN_PELTIER_DUTY, MAX_PELTIER_DUTY);
@@ -177,23 +254,6 @@ void updatePID(float currentTemp) {
     Serial.print(" Error: "); Serial.print(error);
     Serial.print(" Peltier: "); Serial.print(getPWMDuty(BTS_RPWM));
     Serial.print(" Fan: "); Serial.println(getPWMDuty(BTS_LPWM));
-}
-
-void rotary_onButtonClick() {
-    static unsigned long lastTimePressed = 0;
-    unsigned long currentTime = millis();
-    
-    if (currentTime - lastTimePressed < 500) {
-        return;
-    }
-    
-    lastTimePressed = currentTime;
-    currentSetpoint = 20;
-    lastValue = 20;
-    rotaryEncoder.setEncoderValue(20);
-    buttonPressed = true;
-    
-    Serial.println("Button pressed: Value reset to 20");
 }
 
 void updateDisplay(float currentTemp) {
@@ -227,36 +287,6 @@ void updateDisplay(float currentTemp) {
     display.display();
 }
 
-void rotary_loop() {
-    if (rotaryEncoder.encoderChanged()) {
-        int value = rotaryEncoder.readEncoder();
-        
-        if (value < 10) {
-            value = 10;
-            rotaryEncoder.setEncoderValue(10);
-        } else if (value > 25) {
-            value = 25;
-            rotaryEncoder.setEncoderValue(25);
-        }
-        
-        if (value != lastValue || buttonPressed) {
-            currentSetpoint = value;
-            lastValue = value;
-            buttonPressed = false;
-            Serial.print("New setpoint: ");
-            Serial.println(value);
-        }
-    }
-    
-    if (rotaryEncoder.isEncoderButtonClicked()) {
-        rotary_onButtonClick();
-    }
-}
-
-void IRAM_ATTR readEncoderISR() {
-    rotaryEncoder.readEncoder_ISR();
-}
-
 void setup() {
     Serial.begin(115200);
     
@@ -270,9 +300,19 @@ void setup() {
     digitalWrite(BTS_R_EN, HIGH);
     digitalWrite(BTS_L_EN, HIGH);
     
-    // Set initial PWM values - both start at minimum duty cycle
+    // Set initial PWM values
     analogWrite(BTS_RPWM, MIN_PELTIER_DUTY);
     analogWrite(BTS_LPWM, MIN_FAN_DUTY);
+    
+    // Configure encoder pins with pull-up resistors
+    pinMode(ROTARY_ENCODER_A_PIN, INPUT_PULLUP);
+    pinMode(ROTARY_ENCODER_B_PIN, INPUT_PULLUP);
+    pinMode(ROTARY_ENCODER_BUTTON_PIN, INPUT_PULLUP);
+    
+    // Attach interrupts
+    attachInterrupt(digitalPinToInterrupt(ROTARY_ENCODER_A_PIN), handleEncoder, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(ROTARY_ENCODER_B_PIN), handleEncoder, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(ROTARY_ENCODER_BUTTON_PIN), handleButton, CHANGE);
     
     Serial.println("Starting setup...");
 
@@ -282,13 +322,6 @@ void setup() {
     }
     
     display.clearDisplay();
-    
-    rotaryEncoder.begin();
-    rotaryEncoder.setup(readEncoderISR);
-    rotaryEncoder.setBoundaries(10, 25, false);
-    rotaryEncoder.disableAcceleration();
-    rotaryEncoder.setEncoderValue(20);
-    
     analogReadResolution(12);
     
     // Show initial values
@@ -300,17 +333,30 @@ void setup() {
 
 void loop() {
     static unsigned long lastDisplay = 0;
+    static int lastEncoderValue = encoderValue;
     unsigned long currentMillis = millis();
-    
-    rotary_loop();
     
     // Update temperature reading and control system
     if (currentMillis - lastDisplay >= 500) {
+        // Check if encoder value has changed
+        if (lastEncoderValue != encoderValue || encoderButtonState) {
+            currentSetpoint = encoderValue;
+            lastEncoderValue = encoderValue;
+            
+            if (encoderButtonState) {
+                encoderButtonState = false;  // Clear the button flag
+                Serial.println("Button pressed - Reset to 20");
+            }
+            
+            Serial.print("New setpoint: ");
+            Serial.println(currentSetpoint);
+        }
+        
         float currentTemp = readTemperature();
         updatePID(currentTemp);
         updateDisplay(currentTemp);
         lastDisplay = currentMillis;
     }
     
-    delay(50);
+    delay(10);  // Small delay to prevent excessive CPU usage
 }
