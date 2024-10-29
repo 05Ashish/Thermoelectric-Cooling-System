@@ -1,6 +1,6 @@
 # Temperature Control System with Rotary Encoder, OLED Display, and PWM
 
-This project implements a temperature control system for an ESP32 that uses a rotary encoder to set a target temperature. The system reads temperature data from a thermistor, displays the current and target temperatures on an OLED screen, and adjusts a Peltier cooler and fan based on a PID control system.
+This project implements a temperature control system for an ESP32 that uses a rotary encoder to set a target temperature. The system reads temperature data from a thermistor, displays the current and target temperatures on an OLED screen, and adjusts a Peltier cooler and fan based on a PID control system. REFER TO final_code.ino
 
 ## Features
 - **Rotary Encoder Control**: Adjust the temperature setpoint (range: 10°C to 25°C).
