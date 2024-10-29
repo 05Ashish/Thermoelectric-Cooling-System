@@ -61,7 +61,7 @@ Displays:
 
 ## Usage
 
-1. **Wiring**: Connect components as per the pin configuration above.
+1. **Wiring**: Connect components as per the pin [configuration](https://github.com/05Ashish/Thermoelectric-Cooling-System/blob/main/image.png) above.
 2. **Set Temperature**: Rotate the encoder to set the target temperature.
 3. **Start Control**: Once powered, the system maintains the set temperature, adjusting Peltier and fan duty cycles as needed.
 
