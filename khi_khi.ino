@@ -40,7 +40,7 @@
 #define SAMPLE_DELAY 10
 
 // PWM Limits
-#define MIN_FAN_DUTY 128        // 50% minimum fan speed
+#define MIN_FAN_DUTY 0        // 0% minimum fan speed
 #define MAX_FAN_DUTY 255        // 100% maximum fan speed
 #define MIN_PELTIER_DUTY 64     // 25% minimum Peltier duty cycle
 #define MAX_PELTIER_DUTY 255    // 100% maximum Peltier duty cycle
@@ -48,7 +48,7 @@
 
 // Fan control parameters
 #define FAN_TEMP_THRESHOLD 2.0  // Temperature difference where fan reaches maximum
-#define FAN_RESPONSE_FACTOR 0.7 // How aggressively fan responds to temperature difference
+#define FAN_RESPONSE_FACTOR 1.0 // How aggressively fan responds to temperature difference
 
 // Objects
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, NULL, OLED_RESET);
@@ -71,9 +71,7 @@ uint8_t calculateFanDuty(float tempDifference) {
     }
     
     // Calculate fan duty cycle proportional to temperature difference
-    float fanRange = MAX_FAN_DUTY - MIN_FAN_DUTY;
-    float normalizedDiff = min(tempDifference / FAN_TEMP_THRESHOLD, 1.0);
-    float fanOutput = MIN_FAN_DUTY + (fanRange * normalizedDiff * FAN_RESPONSE_FACTOR);
+    float fanOutput = MIN_FAN_DUTY + ((MAX_FAN_DUTY - MIN_FAN_DUTY) * min(tempDifference / FAN_TEMP_THRESHOLD, 1.0) * FAN_RESPONSE_FACTOR);
     
     return (uint8_t)constrain(fanOutput, MIN_FAN_DUTY, MAX_FAN_DUTY);
 }
